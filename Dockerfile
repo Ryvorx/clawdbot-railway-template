@@ -34,7 +34,7 @@ RUN set -eux; \
   done
 
 # Relax pnpm's minimumReleaseAge to 24h (default 72h blocks recently-released packages).
-RUN printf 'minimumReleaseAge=1h\nminimumReleaseAgeExclude[]=oxfmt\nminimumReleaseAgeExclude[]=ast-grep\nminimumReleaseAgeExclude[]=matrix-js-sdk\n' > .npmrc
+RUN printf '\nminimumReleaseAge: 1440\nminimumReleaseAgeExclude:\n - oxfmt\n - ast-grep\n - matrix-js-sdk\n' >> pnpm-workspace.yaml
 RUN pnpm install --no-frozen-lockfile
 RUN pnpm build
 ENV OPENCLAW_PREFER_PNPM=1
