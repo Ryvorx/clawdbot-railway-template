@@ -34,7 +34,7 @@ RUN set -eux; \
   done
 
 # Exempt oxfmt from pnpm's minimumReleaseAge check (package may be too new).
-RUN echo "minimumReleaseAgeExclude[]=oxfmt" >> .npmrc
+RUN printf 'minimumReleaseAgeExclude[]=oxfmt\n' > .npmrc
 RUN pnpm install --no-frozen-lockfile
 RUN pnpm build
 ENV OPENCLAW_PREFER_PNPM=1
