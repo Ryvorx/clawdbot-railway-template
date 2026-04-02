@@ -34,7 +34,7 @@ RUN set -eux; \
   done
 
 # Relax pnpm's minimumReleaseAge to 24h (default 72h blocks recently-released packages).
-RUN printf 'minimumReleaseAge=24h\n' > .npmrc
+RUN printf 'minimumReleaseAge=1h\n' > .npmrc
 RUN pnpm install --no-frozen-lockfile
 RUN pnpm build
 ENV OPENCLAW_PREFER_PNPM=1
