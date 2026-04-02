@@ -33,8 +33,8 @@ RUN set -eux; \
     sed -i -E 's/"openclaw"[[:space:]]*:[[:space:]]*"workspace:[^"]+"/"openclaw": "*"/g' "$f"; \
   done
 
-# Exempt oxfmt from pnpm's minimumReleaseAge check (package may be too new).
-RUN printf 'minimumReleaseAgeExclude[]=oxfmt\n' > .npmrc
+# Relax pnpm's minimumReleaseAge to 24h (default 72h blocks recently-released packages).
+RUN printf 'minimumReleaseAge=24h\n' > .npmrc
 RUN pnpm install --no-frozen-lockfile
 RUN pnpm build
 ENV OPENCLAW_PREFER_PNPM=1
