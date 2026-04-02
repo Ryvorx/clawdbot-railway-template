@@ -33,14 +33,8 @@ RUN set -eux; \
     sed -i -E 's/"openclaw"[[:space:]]*:[[:space:]]*"workspace:[^"]+"/"openclaw": "*"/g' "$f"; \
   done
 
-# Relax pnpm's minimumReleaseAge to 24h (default 72h blocks recently-released packages).
-RUN cat >> pnpm-workspace.yaml <<'EOF'
-minimumReleaseAge: 60
-minimumReleaseAgeExclude:
-  - oxfmt
-  - ast-grep
-  - matrix-js-sdk
-EOF
+# Relax pnpm's minimumReleaseAge to 60m
+RUN sed -i 's/^minimumReleaseAge:.*/minimumReleaseAge: 60/' pnpm-workspace.yaml
 RUN pnpm install --no-frozen-lockfile
 RUN pnpm build
 ENV OPENCLAW_PREFER_PNPM=1
