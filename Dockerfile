@@ -38,6 +38,7 @@ RUN set -eux; \
 
 # Relax pnpm's minimumReleaseAge to 60m
 RUN sed -i 's/^minimumReleaseAge:.*/minimumReleaseAge: 60/' pnpm-workspace.yaml
+RUN node -e "let p=require('./package.json'); p.packageManager='pnpm@11.2.2'; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2))"
 RUN pnpm install --no-frozen-lockfile
 RUN pnpm build
 ENV OPENCLAW_PREFER_PNPM=1
