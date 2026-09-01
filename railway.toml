@@ -2,7 +2,8 @@
 builder = "dockerfile"
 
 [deploy]
-healthCheckPath = "/health"
+# Public endpoint exposed by src/server.js. Keep this path in sync with the wrapper.
+healthCheckPath = "/healthz"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 
@@ -15,3 +16,7 @@ requiredMountPath = "/data"
 # can cause domain routing mismatches.
 OPENCLAW_STATE_DIR = "/data/.openclaw"
 OPENCLAW_WORKSPACE_DIR = "/data/workspace"
+
+# OpenClaw's gateway runs behind the Railway wrapper on loopback.
+# 8080/$PORT is the wrapper/public port; 18789 is the OpenClaw gateway port.
+OPENCLAW_GATEWAY_PORT = "18789"
