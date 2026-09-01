@@ -1,192 +1,309 @@
 # OpenClaw Railway Template
 
-This repo packages **OpenClaw** for Railway with a small **/setup** web wizard so users can deploy and onboard **without running any commands**.
+This repository packages **OpenClaw** for Railway with a small wrapper and a browser-based `/setup` wizard.
 
-## What you get
+## Architecture
 
-- **OpenClaw Gateway + Control UI** (served at `/` and `/openclaw`)
-- A friendly **Setup Wizard** at `/setup` (protected by a password)
-- Persistent state via **Railway Volume** (so config/credentials/memory survive redeploys)
-- One-click **Export backup** (so users can migrate off Railway later)
-- **Import backup** from `/setup` (advanced recovery)
+```text
+Internet / Railway custom domain
+        |
+        v
+Railway $PORT (wrapper, commonly 8080)
+        |
+        v
+127.0.0.1:18789 (OpenClaw Gateway)
+```
 
-## How it works (high level)
+The wrapper:
 
-- The container runs a wrapper web server.
-- The wrapper protects `/setup` (and the Control UI at `/openclaw`) with `SETUP_PASSWORD` using HTTP Basic auth.
-- During setup, the wrapper runs `openclaw onboard --non-interactive ...` inside the container, writes state to the volume, and then starts the gateway.
-- After setup, **`/` is OpenClaw**. The wrapper reverse-proxies all traffic (including WebSockets) to the local gateway process.
+- serves `/setup`
+- manages the OpenClaw Gateway process
+- reverse-proxies HTTP and WebSocket traffic to the loopback Gateway
+- keeps OpenClaw state and workspace on the Railway volume
+- provides backup/import and a small allowlisted debug console
 
-## Railway deploy instructions (what you’ll publish as a Template)
+Optional **Tailscale Serve** can expose the loopback Gateway directly to the tailnet over HTTPS/WSS:
 
-In Railway Template Composer:
+```text
+Tailscale client
+      |
+      v
+https://<node>.<tailnet>.ts.net
+      |
+      v
+Tailscale Serve
+      |
+      v
+127.0.0.1:18789
+```
 
-1) Create a new template from this GitHub repo.
-2) Add a **Volume** mounted at `/data`.
-3) Set the following variables:
+## Port model — important
 
-Required:
-- `SETUP_PASSWORD` — user-provided password to access `/setup` and the Control UI (`/openclaw`) via HTTP Basic auth
+There are **two different ports**. Do not mix them up.
+
+- `PORT` — injected by Railway; the public wrapper listens here. Railway commonly assigns `8080`.
+- `OPENCLAW_GATEWAY_PORT` — the actual OpenClaw Gateway port. Default and recommended value: **`18789`**.
+- `INTERNAL_GATEWAY_PORT` — compatibility alias used by older wrapper configurations. The startup script synchronizes it with `OPENCLAW_GATEWAY_PORT`.
+
+For a normal Railway deployment:
+
+```text
+PORT=<Railway injected value>
+OPENCLAW_GATEWAY_PORT=18789
+```
+
+Do **not** set `OPENCLAW_GATEWAY_PORT=8080`. That can make generated mobile pairing / QR configuration point at the wrapper port instead of the actual Gateway.
+
+## Railway deployment
+
+### Volume
+
+Mount a persistent Railway volume at:
+
+```text
+/data
+```
+
+The included `railway.toml` expects this mount.
+
+### Variables
+
+Required for the wrapper setup UI:
+
+```text
+SETUP_PASSWORD=<strong password>
+```
 
 Recommended:
-- `OPENCLAW_STATE_DIR=/data/.openclaw`
-- `OPENCLAW_WORKSPACE_DIR=/data/workspace`
+
+```text
+OPENCLAW_STATE_DIR=/data/.openclaw
+OPENCLAW_WORKSPACE_DIR=/data/workspace
+OPENCLAW_GATEWAY_PORT=18789
+```
 
 Optional:
-- `OPENCLAW_GATEWAY_TOKEN` — if not set, the wrapper generates one (not ideal). In a template, set it using a generated secret.
 
-Notes:
-- This template pins OpenClaw to a released version by default via Docker build arg `OPENCLAW_GIT_REF` (override if you want `main`).
+```text
+OPENCLAW_GATEWAY_TOKEN=<stable generated secret>
+```
 
-4) Enable **Public Networking** (HTTP). Railway will assign a domain.
-   - This service listens on Railway’s injected `PORT` at runtime (recommended).
-5) Deploy.
+If `OPENCLAW_GATEWAY_TOKEN` is omitted, the wrapper generates and persists one in the OpenClaw state directory.
 
-Then:
-- Visit `https://<your-app>.up.railway.app/setup`
-  - Your browser will prompt for **HTTP Basic auth**. Use any username; the password is `SETUP_PASSWORD`.
-- Complete setup
-- Visit `https://<your-app>.up.railway.app/` and `/openclaw` (same Basic auth)
+Railway injects `PORT` automatically. Do not hard-code it in `railway.toml`.
 
-## Support / community
+### Public networking
 
-- GitHub Issues: https://github.com/vignesh07/clawdbot-railway-template/issues
-- Discord: https://discord.com/invite/clawd
+Enable Railway Public Networking and route the Railway domain/custom domain to the wrapper port selected by Railway (`$PORT`, commonly `8080`).
 
-If you’re filing a bug, please include the output of:
-- `/healthz`
-- `/setup/api/debug` (after authenticating to /setup)
+The OpenClaw Gateway itself remains bound to loopback on `18789`.
 
-## Getting chat tokens (so you don’t have to scramble)
+### Health check
 
-### Telegram bot token
-1) Open Telegram and message **@BotFather**
-2) Run `/newbot` and follow the prompts
-3) BotFather will give you a token that looks like: `123456789:AA...`
-4) Paste that token into `/setup`
+Railway checks:
 
-### Discord bot token
-1) Go to the Discord Developer Portal: https://discord.com/developers/applications
-2) **New Application** → pick a name
-3) Open the **Bot** tab → **Add Bot**
-4) Copy the **Bot Token** and paste it into `/setup`
-5) Invite the bot to your server (OAuth2 URL Generator → scopes: `bot`, `applications.commands`; then choose permissions)
+```text
+/healthz
+```
 
-## Persistence (Railway volume)
+This endpoint is intentionally available without setup authentication so Railway can probe the service.
 
-Railway containers have an ephemeral filesystem. Only the mounted volume at `/data` persists across restarts/redeploys.
+## Setup
 
-What persists cleanly today:
-- **Custom skills / code:** anything under `OPENCLAW_WORKSPACE_DIR` (default: `/data/workspace`)
-- **Node global tools (npm/pnpm):** this template configures defaults so global installs land under `/data`:
-  - npm globals: `/data/npm` (binaries in `/data/npm/bin`)
-  - pnpm globals: `/data/pnpm` (binaries) + `/data/pnpm-store` (store)
-- **Python packages:** create a venv under `/data` (example below). The runtime image includes Python + venv support.
+After deployment, open:
 
-What does *not* persist cleanly:
-- `apt-get install ...` (installs into `/usr/*`)
-- Homebrew installs (typically `/opt/homebrew` or similar)
+```text
+https://<railway-domain>/setup
+```
+
+HTTP Basic auth is used for the wrapper UI. The username can be arbitrary; the password is `SETUP_PASSWORD`.
+
+After onboarding, the wrapper automatically starts the Gateway even when nobody has opened the browser. This is required for Discord, Telegram and other polling/event integrations.
+
+## Tailscale Serve (optional)
+
+Tailscale is installed in the runtime image and runs in **userspace networking mode**, so Railway does not need `/dev/net/tun`.
+
+### Tailnet prerequisites
+
+Enable in the Tailscale admin console:
+
+- MagicDNS
+- HTTPS certificates
+
+### Railway variable
+
+For first enrollment, create a non-ephemeral Tailscale auth key and set:
+
+```text
+TAILSCALE_AUTH_KEY=tskey-auth-...
+```
+
+Recommended auth-key properties for a persistent Railway node:
+
+- reusable: off
+- ephemeral: off
+
+The Tailscale node state is persisted under `/data/tailscale`, so the deployment does not create a new device on every restart.
+
+### Tailscale variables
+
+```text
+TAILSCALE_ENABLED=auto
+TAILSCALE_HOSTNAME=openclaw-railway
+TAILSCALE_STATE_DIR=/data/tailscale
+TAILSCALE_REQUIRED=false
+```
+
+Behavior:
+
+- `TAILSCALE_ENABLED=auto` (default): start Tailscale when an auth key or persisted state exists; otherwise run normally without it.
+- `TAILSCALE_ENABLED=true`: explicitly enable Tailscale.
+- `TAILSCALE_ENABLED=false`: skip Tailscale completely.
+- `TAILSCALE_REQUIRED=false` (default): if Tailscale fails, keep the normal Railway wrapper online.
+- `TAILSCALE_REQUIRED=true`: fail the container when Tailscale cannot start or Serve cannot be configured.
+
+After a successful first enrollment, `TAILSCALE_AUTH_KEY` is no longer needed while the persistent `/data/tailscale` state remains valid.
+
+The startup script configures Tailscale Serve to proxy HTTPS/WSS directly to:
+
+```text
+http://127.0.0.1:18789
+```
+
+The resulting `.ts.net` URL is shown in the deployment logs by `tailscale serve status`.
+
+### Tailscale authentication note
+
+The `.ts.net` path goes directly to the OpenClaw Gateway and therefore does **not** pass through the wrapper's `SETUP_PASSWORD` Basic-auth layer. OpenClaw Gateway authentication/device pairing remains responsible for Gateway access.
+
+Do not disable OpenClaw Gateway authentication merely because Tailscale is enabled unless you deliberately understand and accept that trust model.
+
+## Persistence
+
+Railway's container filesystem is ephemeral. Persist important data under `/data`.
+
+Defaults:
+
+```text
+/data/.openclaw       OpenClaw state/config/credentials
+/data/workspace       OpenClaw workspace
+/data/tailscale       Tailscale node identity/state
+/data/npm             npm global prefix
+/data/npm-cache       npm cache
+/data/pnpm            pnpm global binaries
+/data/pnpm-store      pnpm store
+```
 
 ### Optional bootstrap hook
 
-If `/data/workspace/bootstrap.sh` exists, the wrapper will run it on startup (best-effort) before starting the gateway.
-Use this to initialize persistent install prefixes or create a venv.
+If this file exists:
 
-Example `bootstrap.sh`:
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Example: create a persistent python venv
-python3 -m venv /data/venv || true
-
-# Example: ensure npm/pnpm dirs exist
-mkdir -p /data/npm /data/npm-cache /data/pnpm /data/pnpm-store
+```text
+/data/workspace/bootstrap.sh
 ```
+
+the wrapper runs it at startup before the Gateway starts.
+
+Use it for persistent user tooling, for example a Python virtual environment. Do not rely on `apt-get install` there because system packages live on the ephemeral container filesystem.
+
+## Backups
+
+Authenticated `/setup` provides:
+
+- export to `.tar.gz`
+- import into `/data`
+
+The wrapper stops/restarts the Gateway around restore operations where required.
 
 ## Troubleshooting
 
-### “disconnected (1008): pairing required” / dashboard health offline
+### Mobile QR code contains the wrong port
 
-This is not a crash — it means the gateway is running, but no device has been approved yet.
+Check:
 
-Fix:
-- Open `/setup`
-- Use the **Debug Console**:
-  - `openclaw devices list`
-  - `openclaw devices approve <requestId>`
+```text
+OPENCLAW_GATEWAY_PORT=18789
+```
 
-If `openclaw devices list` shows no pending request IDs:
-- Make sure you’re visiting the Control UI at `/openclaw` (or your native app) and letting it attempt to connect
-  - Note: the Railway wrapper now proxies the gateway and injects the auth token automatically, so you should not need to paste the gateway token into the Control UI when using `/openclaw`.
-- Ensure your state dir is the Railway volume (recommended): `OPENCLAW_STATE_DIR=/data/.openclaw`
-- Check `/setup/api/debug` for the active state/workspace dirs + gateway readiness
+The Railway wrapper port (often `8080`) is **not** the OpenClaw Gateway port.
 
-### “unauthorized: gateway token mismatch”
+### `502 Bad Gateway` / Gateway unavailable
 
-The Control UI connects using `gateway.remote.token` and the gateway validates `gateway.auth.token`.
+Check:
 
-Fix:
-- Re-run `/setup` so the wrapper writes both tokens.
-- Or set both values to the same token in config.
+- Railway volume is mounted at `/data`
+- `OPENCLAW_STATE_DIR=/data/.openclaw`
+- `OPENCLAW_WORKSPACE_DIR=/data/workspace`
+- `OPENCLAW_GATEWAY_PORT=18789`
+- deployment logs for `[gateway]` failures
+- `/healthz`
+- authenticated `/setup/api/debug`
 
-### “Application failed to respond” / 502 Bad Gateway
+### Pairing required
 
-Most often this means the wrapper is up, but the gateway can’t start or can’t bind.
+From `/setup`, use the debug/device helper or the OpenClaw Control UI to approve the pending device request.
 
-Checklist:
-- Ensure you mounted a **Volume** at `/data` and set:
-  - `OPENCLAW_STATE_DIR=/data/.openclaw`
-  - `OPENCLAW_WORKSPACE_DIR=/data/workspace`
-- Ensure **Public Networking** is enabled (Railway will inject `PORT`).
-- Check Railway logs for the wrapper error: it will show `Gateway not ready:` with the reason.
+### Tailscale does not appear in the tailnet
 
-### Legacy CLAWDBOT_* env vars / multiple state directories
+Check deployment logs for `[tailscale]` and verify:
 
-If you see warnings about deprecated `CLAWDBOT_*` variables or state dir split-brain (e.g. `~/.openclaw` vs `/data/...`):
-- Use `OPENCLAW_*` variables only
-- Ensure `OPENCLAW_STATE_DIR=/data/.openclaw` and `OPENCLAW_WORKSPACE_DIR=/data/workspace`
-- Redeploy after fixing Railway Variables
+- `TAILSCALE_AUTH_KEY` is valid for first enrollment
+- `/data` is mounted and writable
+- MagicDNS is enabled
+- HTTPS certificates are enabled
 
-### Build OOM (out of memory) on Railway
+### Tailscale failure should not take OpenClaw down
 
-Building OpenClaw from source can exceed small memory tiers.
+Leave:
 
-Recommendations:
-- Use a plan with **2GB+ memory**.
-- If you see `Reached heap limit Allocation failed - JavaScript heap out of memory`, upgrade memory and redeploy.
+```text
+TAILSCALE_REQUIRED=false
+```
 
-## Local smoke test
+The startup wrapper will fall back to the normal Railway route if Tailscale setup fails.
+
+## Development / CI
+
+Local checks:
 
 ```bash
-docker build -t clawdbot-railway-template .
+npm ci
+npm run check
+```
 
+This validates JavaScript syntax, the Tailscale startup shell script, and the Node test suite.
+
+Build locally:
+
+```bash
+docker build -t openclaw-railway-template .
+```
+
+Run without Tailscale:
+
+```bash
 docker run --rm -p 8080:8080 \
   -e PORT=8080 \
   -e SETUP_PASSWORD=test \
   -e OPENCLAW_STATE_DIR=/data/.openclaw \
   -e OPENCLAW_WORKSPACE_DIR=/data/workspace \
-  -v $(pwd)/.tmpdata:/data \
-  clawdbot-railway-template
-
-# open http://localhost:8080/setup (password: test)
+  -e OPENCLAW_GATEWAY_PORT=18789 \
+  -e TAILSCALE_ENABLED=false \
+  -v "$(pwd)/.tmpdata:/data" \
+  openclaw-railway-template
 ```
 
----
+Then open `http://localhost:8080/setup`.
 
-## Official template / endorsements
+GitHub Actions runs the source checks before attempting the Docker build.
 
-- Officially recommended by OpenClaw: <https://docs.openclaw.ai/railway>
-- Railway announcement (official): [Railway tweet announcing 1‑click OpenClaw deploy](https://x.com/railway/status/2015534958925013438)
+## OpenClaw version updates
 
-  ![Railway official tweet screenshot](assets/railway-official-tweet.jpg)
+The Docker build pins OpenClaw using `OPENCLAW_GIT_REF` to a released tag. A scheduled GitHub workflow checks upstream releases and opens a pull request when a newer release is available.
 
-- Endorsement from Railway CEO: [Jake Cooper tweet endorsing the OpenClaw Railway template](https://x.com/justjake/status/2015536083514405182)
+This keeps upgrades reviewable instead of silently rebuilding from a moving `main` branch.
 
-  ![Jake Cooper endorsement tweet screenshot](assets/railway-ceo-endorsement.jpg)
+## Upstream
 
-- Created and maintained by **Vignesh N (@vignesh07)**
-- **1800+ deploys on Railway and counting** [Link to template on Railway](https://railway.com/deploy/clawdbot-railway-template)
-
-![Railway template deploy count](assets/railway-deploys.jpg)
+This repository is based on the Railway OpenClaw template originally maintained by Vignesh N (`vignesh07/clawdbot-railway-template`) and builds OpenClaw from the upstream `openclaw/openclaw` repository.
