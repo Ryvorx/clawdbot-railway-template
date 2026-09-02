@@ -53,7 +53,6 @@ RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
-    gnupg \
     tini \
     python3 \
     python3-venv \
@@ -78,9 +77,9 @@ ENV PATH="/usr/local/sbin:/usr/local/bin:/data/npm/bin:/data/pnpm:/usr/sbin:/usr
 
 WORKDIR /app
 
-# Wrapper deps
-COPY package.json ./
-RUN npm install --omit=dev && npm cache clean --force
+# Wrapper deps. Use the committed lockfile so runtime dependencies are reproducible.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
 
 # Copy built openclaw
 COPY --from=openclaw-build /openclaw /openclaw

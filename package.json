@@ -8,8 +8,10 @@
   "scripts": {
     "dev": "node src/server.js",
     "start": "node src/server.js",
-    "lint": "node -c src/server.js",
+    "lint": "node --check src/server.js && node --check src/setup-app.js",
+    "lint:shell": "bash -n scripts/start-with-tailscale.sh",
     "test": "node --test",
+    "check": "npm run lint && npm run lint:shell && npm test",
     "smoke": "node scripts/smoke.js"
   },
   "dependencies": {
